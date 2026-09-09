@@ -18,6 +18,8 @@
        換字會直接把剛貼上的那段重貼一次
 
 詞庫：libchewing-data (LGPL-2.1) dict/chewing/tsi.csv + word.csv，放同目錄。
+學習：選字模式每選一次字，就把該字與前後 1~2 字組成的詞以高詞頻寫進 learned.csv，
+      下次同樣注音直接出那個字（像輸入法的自動學習）。想忘掉某個學錯的詞，刪那一行。
 """
 import argparse
 import csv
@@ -30,7 +32,9 @@ import threading
 import time
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-DICT_FILES = ("tsi.csv", "word.csv", "user_phrases.csv")  # user 檔優先，格式相同，詞頻填大一點
+DICT_FILES = ("tsi.csv", "word.csv", "user_phrases.csv", "learned.csv")  # 後面的覆蓋前面
+LEARNED = os.path.join(BASE, "learned.csv")   # 選字自動學習（程式自己寫，可手動編輯/刪除）
+LEARN_BOOST = 500000.0
 HOTKEY = "<ctrl>+<shift>+z"
 MAX_PHRASE = 6           # 詞庫最長詞（音節數）
 POPUP_MS = 3000
@@ -149,6 +153,44 @@ class Lexicon:
         for key, (word, f) in raw.items():
             self.table[key] = (word, math.log(f) - lt)
         self.unknown = -lt - 5.0
+
+    def learn(self, pieces, idx):
+        """使用者在第 idx 個字選了新字：把包含該字、長度 1~3 的所有片段（例如
+        船 / 上船 / 船了 / 上船了）以高詞頻寫進 learned.csv 並更新記憶體，
+        下次同樣注音直接選它。user_phrases.csv（999999）仍優先於學習值。"""
+        if not pieces[idx][1]:
+            return
+        n = len(pieces)
+        seen = set()
+        try:
+            with open(LEARNED, encoding="utf-8") as f:
+                seen = {l.strip() for l in f}
+        except OSError:
+            pass
+        lines = []
+        for a in range(max(0, idx - 2), idx + 1):
+            for b in range(idx + 1, min(n, a + 3) + 1):
+                seg = pieces[a:b]
+                if not all(sy for _, sy in seg):
+                    continue
+                word = "".join(c for c, _ in seg)
+                key = tuple(sy for _, sy in seg)
+                lp = math.log(LEARN_BOOST + 1) - math.log(self.total or 1)
+                cur = self.table.get(key)
+                if cur is None or cur[1] < lp or cur[0] != word and cur[1] <= lp:
+                    self.table[key] = (word, lp)
+                if len(key) == 1:
+                    self.chars.setdefault(key[0], {})[word] = LEARN_BOOST
+                line = f"{word},{int(LEARN_BOOST)},{' '.join(key)}"
+                if line not in seen:
+                    lines.append(line)
+                    seen.add(line)
+        if lines:
+            try:
+                with open(LEARNED, "a", encoding="utf-8", newline="") as f:
+                    f.write("\n".join(lines) + "\n")
+            except OSError:
+                pass
 
     def homophones(self, syl, limit=20):
         d = self.chars.get(syl, {})
@@ -433,6 +475,9 @@ def run_daemon(lex):
             labels[idx].config(text=ch)
             sel["busy"] = True
             arm()
+            pieces_now = list(state["pieces"])
+            pieces_now[idx] = (ch, pieces_now[idx][1])
+            lex.learn(pieces_now, idx)
 
             def worker():
                 try:
