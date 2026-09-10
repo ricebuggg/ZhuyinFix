@@ -914,6 +914,9 @@ def run_daemon(lex):
         down = msg in (0x100, 0x104)
         ctrl = user32.GetAsyncKeyState(0x11) & 0x8000
         shift = user32.GetAsyncKeyState(0x10) & 0x8000
+        if data.vkCode == 0x51 and ctrl and state["enabled"]:
+            # Ctrl+Q 是我們的快捷鍵：整個吞掉，不能讓 App 看到（Slack 的 Ctrl+Q = 結束程式）
+            key_listener.suppress_event()
         if state["popup"] is None and not sel["active"]:
             if down and not ctrl:
                 vk = data.vkCode
