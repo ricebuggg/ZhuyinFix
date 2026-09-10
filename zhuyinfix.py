@@ -474,7 +474,8 @@ def run_daemon(lex):
                 l.config(bg=BG)
             labels[i].config(bg=CUR)
             ch, sy = state["pieces"][i]
-            sel.update(idx=i, cands=[c for c in lex.homophones(sy, 60) if c != ch], page=0, cur=0)
+            # 目前這個字永遠排第 1：按 Enter/1 就是「保留、跳下一字」，不會被強迫換字
+            sel.update(idx=i, cands=[ch] + [c for c in lex.homophones(sy, 60) if c != ch], page=0, cur=0)
             render_cands()
 
         def step(d):
@@ -491,6 +492,10 @@ def run_daemon(lex):
             if k >= len(cs) or sel.get("busy"):
                 return
             ch, idx = cs[k], sel["idx"]
+            if ch == state["pieces"][idx][0]:       # 選了原字：不重貼，直接跳下一字
+                arm()
+                jobs.put(("advance",))
+                return
             labels[idx].config(text=ch)
             sel["busy"] = True
             arm()
@@ -508,7 +513,7 @@ def run_daemon(lex):
 
         def enter_select():
             arm()
-            hint.config(text="←→ 換字位  ↑↓ 選候選  Enter/數字 確定  Space 下頁  Esc 結束")
+            hint.config(text="←→ 換字位  ↑↓ 選候選  Enter 保留/確定  數字 選字  Space 下頁  Esc 結束")
             if not sel["active"]:
                 sel["active"] = True
                 first = next((i for i in range(len(state["pieces"])) if selectable(i)), None)
