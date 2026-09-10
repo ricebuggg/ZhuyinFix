@@ -583,6 +583,32 @@ def run_daemon(lex):
     PAGE = 9
     sel = {"active": False, "idx": 0, "cands": [], "page": 0, "cur": 0}
 
+    class _RECT(ctypes.Structure):
+        _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long), ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+    class _GUITHREADINFO(ctypes.Structure):
+        _fields_ = [("cbSize", ctypes.c_uint), ("flags", ctypes.c_uint), ("hwndActive", ctypes.c_void_p),
+                    ("hwndFocus", ctypes.c_void_p), ("hwndCapture", ctypes.c_void_p), ("hwndMenuOwner", ctypes.c_void_p),
+                    ("hwndMoveSize", ctypes.c_void_p), ("hwndCaret", ctypes.c_void_p), ("rcCaret", _RECT)]
+
+    class _POINT(ctypes.Structure):
+        _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+    def caret_pos():
+        """文字插入點的螢幕座標（左下角）。拿不到（多數 Electron/瀏覽器不回報）就退回滑鼠位置。"""
+        try:
+            hwnd = state["hwnd"] or user32.GetForegroundWindow()
+            tid = user32.GetWindowThreadProcessId(hwnd, None)
+            gti = _GUITHREADINFO(); gti.cbSize = ctypes.sizeof(_GUITHREADINFO)
+            if user32.GetGUIThreadInfo(tid, ctypes.byref(gti)) and gti.hwndCaret \
+                    and (gti.rcCaret.right > gti.rcCaret.left or gti.rcCaret.bottom > gti.rcCaret.top):
+                pt = _POINT(gti.rcCaret.left, gti.rcCaret.bottom)
+                user32.ClientToScreen(gti.hwndCaret, ctypes.byref(pt))
+                return pt.x, pt.y - 20      # 呼叫端會 +20；讓小框貼在插入點正下方
+        except Exception:
+            pass
+        return root.winfo_pointerxy()
+
     def close_popup(back=True):
         w = state["popup"]
         state["popup"] = None
@@ -609,7 +635,7 @@ def run_daemon(lex):
         win.overrideredirect(True)
         win.attributes("-topmost", True)
         win.configure(bg=BG)
-        x, y = root.winfo_pointerxy()
+        x, y = caret_pos()
         win.geometry(f"+{x + 16}+{y + 20}")
         win.update_idletasks()
         try:
