@@ -586,8 +586,11 @@ def run_daemon(lex):
         print("[tk error]", "".join(_tb.format_exception(exc, val, tb)), flush=True)
     root.report_callback_exception = _report
     BG, FG, DIM, HI, SEL, CUR = "#1f2937", "#f9fafb", "#9ca3af", "#374151", "#2563eb", "#4b5563"
-    FONT = ("Microsoft JhengHei", 14, "bold")
-    SMALL = ("Microsoft JhengHei", 11)
+    SCALE = 1.6                                   # 小框整體放大倍率（字級、間距一起放大）
+    FONT = ("Microsoft JhengHei", round(14 * SCALE), "bold")
+    SMALL = ("Microsoft JhengHei", round(11 * SCALE))
+    TINY = ("Microsoft JhengHei", round(8 * SCALE))
+    PADX, PADY = round(10 * SCALE), round(6 * SCALE)
     IDLE_MS = 8000
     PAGE = 9
     sel = {"active": False, "idx": 0, "cands": [], "page": 0, "cur": 0}
@@ -708,18 +711,18 @@ def run_daemon(lex):
         arm()
 
         tk.Label(win, text=bpmf or " ", fg=DIM, bg=BG, font=SMALL,
-                 justify="left").pack(anchor="w", padx=10, pady=(6, 0))
+                 justify="left").pack(anchor="w", padx=PADX, pady=(PADY, 0))
         row = tk.Frame(win, bg=BG)
-        row.pack(anchor="w", padx=8, pady=(0, 4))
+        row.pack(anchor="w", padx=PADX - 2, pady=(0, PADY // 2))
         cand = tk.Frame(win, bg=BG)
-        cand.pack(anchor="w", padx=8, pady=(0, 4))
+        cand.pack(anchor="w", padx=PADX - 2, pady=(0, PADY // 2))
         hint = tk.Label(win, text=("已自動轉換 · Enter 送出 · Esc 復原 · Ctrl+Shift+' 選字" if auto
                                    else "再按 Ctrl+Shift+' 進入選字 · Esc 復原"), fg=DIM, bg=BG,
-                        font=("Microsoft JhengHei", 8))
-        hint.pack(anchor="w", padx=10, pady=(0, 6))
+                        font=TINY)
+        hint.pack(anchor="w", padx=PADX, pady=(0, PADY))
         labels = []
         for i, (ch, sy) in enumerate(pieces):
-            l = tk.Label(row, text=ch, fg=FG if sy else DIM, bg=BG, font=FONT, padx=3,
+            l = tk.Label(row, text=ch, fg=FG if sy else DIM, bg=BG, font=FONT, padx=round(3 * SCALE),
                          cursor="hand2" if sy else "arrow")
             l.pack(side="left")
             if sy:
@@ -746,7 +749,7 @@ def run_daemon(lex):
                 l.bind("<Button-1>", lambda e, n=n: pick(n))
             if pages > 1:
                 tk.Label(cand, text=f"{sel['page'] + 1}/{pages}  Space/PgDn 下一頁", fg=DIM, bg=BG,
-                         font=("Microsoft JhengHei", 8)).pack(anchor="w")
+                         font=TINY).pack(anchor="w")
 
         def move_to(i):
             arm()
