@@ -9,7 +9,7 @@
 
 觸發後流程
   1. 有選取文字 -> 轉換選取的那段
-     沒選取     -> 自動 Shift+Home 選到行首再轉
+     沒選取     -> 自動抓整行，只轉換行尾的英數亂碼那段，前面中文不動
   2. 結果直接貼回覆蓋，原本剪貼簿內容（純文字）會還原
   3. 游標旁跳出提示：原注音 -> 結果，8 秒沒動作自動消失
   4. 選字：再按一次 Ctrl+Shift+Z 進入選字模式（像輸入法）：
@@ -322,10 +322,23 @@ def run_daemon(lex):
         time.sleep(0.08)
         text = copy_sel()
         if not text:
+            # 沒選取：先 Shift+Home 抓整行，但只換行尾的英數亂碼那一段，
+            # 前面已經打好的中文不動（避免貼上失敗時整行不見）。
             with kb.pressed(Key.shift):
                 kb.press(Key.home); kb.release(Key.home)
             time.sleep(0.08)
             text = copy_sel()
+            if text:
+                m = re.search(r"[\x20-\x7e]+$", text)
+                tail = m.group().lstrip() if m else ""
+                if tail and tail != text.strip():
+                    kb.press(Key.right); kb.release(Key.right)   # 取消選取，回到行尾
+                    time.sleep(0.05)
+                    with kb.pressed(Key.shift):
+                        for _ in range(len(tail)):
+                            kb.press(Key.left); kb.release(Key.left)
+                    time.sleep(0.05)
+                    text = tail
         if not text or not text.strip():
             pyperclip.copy(saved)
             jobs.put(("show", "（沒有抓到文字）", "", []))
