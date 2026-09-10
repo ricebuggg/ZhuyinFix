@@ -813,11 +813,31 @@ def run_daemon(lex):
     typed = {"buf": "", "hwnd": None}
     CHEAP = re.compile(r"^[a-z0-9;,./\- ]{6,}$")   # TYPED 表記的是小寫，Caps Lock 也一樣     # hook 內只做便宜檢查；Viterbi 放到 worker
 
+    imm32 = ctypes.windll.imm32
+    imm32.ImmGetDefaultIMEWnd.restype = ctypes.c_void_p
+    imm32.ImmGetDefaultIMEWnd.argtypes = [ctypes.c_void_p]
+    user32.SendMessageTimeoutW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_ssize_t,
+                                           ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_size_t)]
+
+    def ime_chinese(hwnd):
+        """前景視窗的輸入法現在是不是中文模式。是的話使用者打的英數是注音鍵、Enter 是在選字，
+        不能攔。查不到（純英文鍵盤/無 IME）就當英文模式。"""
+        try:
+            ime = imm32.ImmGetDefaultIMEWnd(hwnd)
+            if not ime:
+                return False
+            res = ctypes.c_size_t(0)
+            ok = user32.SendMessageTimeoutW(ime, 0x0283, 0x0005, 0, 0x0002, 30, ctypes.byref(res))  # WM_IME_CONTROL, IMC_GETOPENSTATUS
+            return bool(ok) and res.value != 0
+        except Exception:
+            return False
+
     def maybe_auto(buf):
         """worker 執行緒：完整判斷；不是亂碼就把被攔掉的 Enter 補回去。"""
         if looks_like_garbage(buf, lex):
             do_convert(True)
         else:
+            print(f"[{time.strftime('%H:%M:%S')}] 自動偵測 放行（不像亂碼）: {buf[-40:]!r}", flush=True)
             kb.press(Key.enter); kb.release(Key.enter)
 
     def key_filter(msg, data):
@@ -838,13 +858,15 @@ def run_daemon(lex):
                 elif vk == 0x0D:                        # Enter
                     buf, typed["buf"] = typed["buf"], ""
                     if state["enabled"] and state["auto_enter"] and not shift and not state["busy"] \
-                            and CHEAP.match(buf) and re.search(r"[3467]", buf):
+                            and CHEAP.match(buf) and re.search(r"[3467]", buf) and not ime_chinese(fg):
                         threading.Thread(target=maybe_auto, args=(buf,), daemon=True).start()
                         key_listener.suppress_event()
                 elif vk in TYPED and not shift:
                     typed["buf"] = (typed["buf"] + TYPED[vk])[-200:]
                 elif vk not in MODS:
                     typed["buf"] = ""
+            elif down and ctrl and data.vkCode not in MODS:
+                typed["buf"] = ""                        # Ctrl+任何鍵（貼上、Ctrl+Enter…）都重來
             return True
         if state["popup"] is not None and not sel["active"]:
             if down and data.vkCode not in MODS:
