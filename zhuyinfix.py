@@ -301,6 +301,9 @@ def looks_like_garbage(text, lex):
     至少 4 個音節；每個空白分開的段都能拆成合法音節、無大寫；至少一個聲調鍵（一整句
     全一聲不合理）；轉出來沒有殘留注音（每個音節詞庫都認得）。英文句子幾乎過不了第 3、4 關。"""
     t = text.strip()
+    letters = [c for c in t if c.isalpha() and c.isascii()]
+    if letters and all(c.isupper() for c in letters):
+        t = t.lower()
     if len(t) < 6 or any(c.isupper() for c in t) or not re.search(r"[3467]", t):
         return False
     nsyl = 0
@@ -322,6 +325,9 @@ def convert(text, lex, ctx=""):
     給選字用，literal 的字 syllable 為 None。以空白切段；某段若含不合法音節（例如夾在
     句中的英文單字 ticket -> ㄔㄛ ㄏㄜ ㄍ ㄔ），整段視為英文原樣保留。"""
     ctxset = {c for c in ctx if "\u4e00" <= c <= "\u9fff"} if ctx else None
+    letters = [c for c in text if c.isalpha() and c.isascii()]
+    if letters and all(c.isupper() for c in letters):
+        text = text.lower()          # Caps Lock 開著打的：整段都大寫就當小寫處理
     tokens = []
     for m in re.finditer(r"\S+|\s+", text):
         chunk = m.group()
@@ -439,12 +445,16 @@ def run_daemon(lex):
         seq0 = user32.GetClipboardSequenceNumber()
         with kb.pressed(Key.ctrl):
             kb.press("c"); kb.release("c")
-        deadline = time.time() + 0.6
+        deadline = time.time() + 0.5
         while time.time() < deadline:
             if user32.GetClipboardSequenceNumber() != seq0:
-                time.sleep(0.01)
+                for _ in range(10):                  # 序號先跳、內容可能晚一點才寫好
+                    t = clip_get()
+                    if t:
+                        return t
+                    time.sleep(0.005)
                 return clip_get()
-            time.sleep(0.005)
+            time.sleep(0.002)
         return None
 
     def paste_text(text, saved):
@@ -492,7 +502,6 @@ def run_daemon(lex):
             print(f"[{time.strftime('%H:%M:%S')}] 快捷鍵 (取視窗名失敗 {e})", flush=True)
         saved = clip_get()
         release_mods()
-        time.sleep(0.03)
         ctx = ""
         text = None if auto else copy_sel()
         if not text:
@@ -500,7 +509,7 @@ def run_daemon(lex):
             # 前面已經打好的中文不動（避免貼上失敗時整行不見）。
             with kb.pressed(Key.shift):
                 kb.press(Key.home); kb.release(Key.home)
-            time.sleep(0.08)
+            time.sleep(0.02)
             text = copy_sel()
             if text:
                 m = re.search(r"[\x20-\x7e]+$", text)
@@ -508,11 +517,10 @@ def run_daemon(lex):
                 ctx = text[:m.start()] if m else ""
                 if tail and tail != text.strip():
                     kb.press(Key.right); kb.release(Key.right)   # 取消選取，回到行尾
-                    time.sleep(0.05)
                     with kb.pressed(Key.shift):
                         for _ in range(len(tail)):
                             kb.press(Key.left); kb.release(Key.left)
-                    time.sleep(0.05)
+                    time.sleep(0.02)
                     text = tail
         if not text or not text.strip() or (auto and not looks_like_garbage(text, lex)):
             if saved is not None:
@@ -525,10 +533,12 @@ def run_daemon(lex):
             else:
                 jobs.put(("show", "（沒有抓到文字）", "", []))
             return
+        t1 = time.time()
         result, bpmf, pieces = convert(text, lex, ctx)
         state["prev_text"], state["prev_result"] = text, result
+        t2 = time.time()
         paste_text(result, saved)
-        print(f"{text!r} -> {bpmf} -> {result}  ({(time.time() - t0) * 1000:.0f}ms)", flush=True)
+        print(f"{text!r} -> {bpmf} -> {result}  (抓字 {(t1 - t0) * 1000:.0f}ms / 轉換 {(t2 - t1) * 1000:.0f}ms / 貼上 {(time.time() - t2) * 1000:.0f}ms)", flush=True)
         jobs.put(("show", result, bpmf, pieces, auto))
 
     def undo_convert():
@@ -801,7 +811,7 @@ def run_daemon(lex):
     TYPED.update({0x41 + i: chr(0x61 + i) for i in range(26)})
     TYPED.update({0xBA: ";", 0xBC: ",", 0xBE: ".", 0xBF: "/", 0xBD: "-", 0x20: " "})
     typed = {"buf": "", "hwnd": None}
-    CHEAP = re.compile(r"^[a-z0-9;,./\- ]{6,}$")     # hook 內只做便宜檢查；Viterbi 放到 worker
+    CHEAP = re.compile(r"^[a-z0-9;,./\- ]{6,}$")   # TYPED 表記的是小寫，Caps Lock 也一樣     # hook 內只做便宜檢查；Viterbi 放到 worker
 
     def maybe_auto(buf):
         """worker 執行緒：完整判斷；不是亂碼就把被攔掉的 Enter 補回去。"""
