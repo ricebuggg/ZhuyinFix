@@ -46,6 +46,7 @@ LEARN_FIRST = 20000.0     # 第一次選 -> 明顯加分但不置頂，避免一
 CTX_BONUS = 1.5           # 候選詞含有同一行前文已出現的字 -> log 機率加分
 CACHE = os.path.join(BASE, "lexicon.cache.pkl")
 HOTKEY = "Ctrl+Shift+'"          # 顯示用
+POPUP_POS = "center"             # 小框位置：center=螢幕正中 / caret=跟著插入點（抓不到退回滑鼠）
 HOTKEY_VK = 0xDE                 # VK_OEM_7 = ' 鍵；配 Ctrl+Shift。改鍵改這兩行
 MAX_PHRASE = 6           # 詞庫最長詞（音節數）
 POPUP_MS = 3000
@@ -678,14 +679,17 @@ def run_daemon(lex):
         win.overrideredirect(True)
         win.attributes("-topmost", True)
         win.configure(bg=BG)
-        x, y, src = caret_pos()
-        if src == "mouse":
-            x, y = x + 16, y + 20
+        if POPUP_POS == "center":
+            win.withdraw()                    # 先量好尺寸再置中，避免先閃一下左上角
         else:
-            y += 6
-        sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
-        x, y = max(0, min(x, sw - 320)), max(0, min(y, sh - 160))
-        win.geometry(f"+{x}+{y}")
+            x, y, src = caret_pos()
+            if src == "mouse":
+                x, y = x + 16, y + 20
+            else:
+                y += 6
+            sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+            x, y = max(0, min(x, sw - 320)), max(0, min(y, sh - 160))
+            win.geometry(f"+{x}+{y}")
         win.update_idletasks()
         try:
             hwnd = user32.GetAncestor(win.winfo_id(), 2)  # GA_ROOT
@@ -841,6 +845,11 @@ def run_daemon(lex):
                 move_to(nxt)
 
         win.enter_select = enter_select
+        if POPUP_POS == "center":
+            win.update_idletasks()
+            w, h = win.winfo_reqwidth(), win.winfo_reqheight()
+            win.geometry(f"+{(root.winfo_screenwidth() - w) // 2}+{(root.winfo_screenheight() - h) // 2}")
+            win.deiconify()
         win.on_key = on_key
         win.advance = advance
 
