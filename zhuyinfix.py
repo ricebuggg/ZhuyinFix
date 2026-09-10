@@ -4,7 +4,7 @@
   ji394t au04       -> 我愛吃麵
 
 用法
-  python zhuyinfix.py                 常駐（系統匣有圖示），Ctrl+Q 觸發
+  python zhuyinfix.py                 常駐（系統匣有圖示），Ctrl+Shift+' 觸發
   python zhuyinfix.py --text "su3cl3" 命令列測試，不常駐
 
 觸發後流程
@@ -13,7 +13,7 @@
                    前面的中文會當「上下文」，候選詞含同一行出現過的字會加分
   2. 結果直接貼回覆蓋，原本剪貼簿內容（純文字）會還原
   3. 游標旁跳出提示：原注音 -> 結果；繼續打字/Enter 就消失，Esc 復原成原本英數
-  4. 選字：再按一次 Ctrl+Q 進入選字模式（像輸入法）：
+  4. 選字：再按一次 Ctrl+Shift+' 進入選字模式（像輸入法）：
        ←→ 移到要改的字、↑↓ 在候選字裡移動、Enter 或數字鍵確定、Space 下一頁、Esc 結束。
        候選 1 永遠是原本的字，一路 Enter = 都不換。換字會直接把剛貼上的那段重貼一次
   5. 被動偵測：沒按快捷鍵、直接按 Enter 時，若剛打的那串很像注音亂碼（≥4 音節、
@@ -45,7 +45,8 @@ LEARN_BOOST = 500000.0    # 同一組音節第二次選同一結果 -> 置頂（
 LEARN_FIRST = 20000.0     # 第一次選 -> 明顯加分但不置頂，避免一次誤選就壓死常用詞
 CTX_BONUS = 1.5           # 候選詞含有同一行前文已出現的字 -> log 機率加分
 CACHE = os.path.join(BASE, "lexicon.cache.pkl")
-HOTKEY = "<ctrl>+q"
+HOTKEY = "Ctrl+Shift+'"          # 顯示用
+HOTKEY_VK = 0xDE                 # VK_OEM_7 = ' 鍵；配 Ctrl+Shift。改鍵改這兩行
 MAX_PHRASE = 6           # 詞庫最長詞（音節數）
 POPUP_MS = 3000
 
@@ -701,8 +702,8 @@ def run_daemon(lex):
         row.pack(anchor="w", padx=8, pady=(0, 4))
         cand = tk.Frame(win, bg=BG)
         cand.pack(anchor="w", padx=8, pady=(0, 4))
-        hint = tk.Label(win, text=("已自動轉換 · Enter 送出 · Esc 復原 · Ctrl+Q 選字" if auto
-                                   else "再按 Ctrl+Q 進入選字 · Esc 復原"), fg=DIM, bg=BG,
+        hint = tk.Label(win, text=("已自動轉換 · Enter 送出 · Esc 復原 · Ctrl+Shift+' 選字" if auto
+                                   else "再按 Ctrl+Shift+' 進入選字 · Esc 復原"), fg=DIM, bg=BG,
                         font=("Microsoft JhengHei", 8))
         hint.pack(anchor="w", padx=10, pady=(0, 6))
         labels = []
@@ -914,9 +915,18 @@ def run_daemon(lex):
         down = msg in (0x100, 0x104)
         ctrl = user32.GetAsyncKeyState(0x11) & 0x8000
         shift = user32.GetAsyncKeyState(0x10) & 0x8000
-        if data.vkCode == 0x51 and ctrl and state["enabled"]:
-            # Ctrl+Q 是我們的快捷鍵：整個吞掉，不能讓 App 看到（Slack 的 Ctrl+Q = 結束程式）
+        is_hk = data.vkCode == HOTKEY_VK and ctrl and shift
+        if is_hk and state["enabled"]:
+            # 快捷鍵自己在 hook 層處理並整個吞掉，App 完全看不到（pynput GlobalHotKeys 只聽不吞，
+            # 而且 Shift+' 在 Windows 會被讀成 " 導致比對失敗）
+            if down and not hk_state["down"]:
+                hk_state["down"] = True
+                on_hotkey()
+            elif not down:
+                hk_state["down"] = False
             key_listener.suppress_event()
+        elif not down and data.vkCode == HOTKEY_VK:
+            hk_state["down"] = False
         if state["popup"] is None and not sel["active"]:
             if down and not ctrl:
                 vk = data.vkCode
@@ -943,7 +953,7 @@ def run_daemon(lex):
                 if data.vkCode == 0x1B:                 # Esc -> 復原
                     jobs.put(("undo",))
                     key_listener.suppress_event()
-                if not (data.vkCode == 0x51 and ctrl):   # Ctrl+Q（快捷鍵）留給選字
+                if not is_hk:                            # 快捷鍵留給選字
                     jobs.put(("close",))
             return True
         if not sel["active"] or sel.get("busy"):
@@ -955,13 +965,11 @@ def run_daemon(lex):
             jobs.put(("key", name, name if name.isdigit() else ""))
         key_listener.suppress_event()
 
+    hk_state = {"down": False}
     key_listener = keyboard.Listener(win32_event_filter=key_filter)
     key_listener.daemon = True
     key_listener.start()
 
-    hk = keyboard.GlobalHotKeys({HOTKEY: on_hotkey})
-    hk.daemon = True
-    hk.start()
     print(f"ZhuyinFix 常駐中，快捷鍵 {HOTKEY}（Ctrl+C 結束）", flush=True)
     tray = start_tray(root, state, jobs)
     root.after(100, poll)
@@ -1025,7 +1033,7 @@ def start_tray(root, state, jobs):
         jobs.put(("quit",))                # tk 不是 thread-safe，交給主執行緒 destroy
 
     menu = pystray.Menu(
-        pystray.MenuItem(lambda i: "啟用（Ctrl+Q）", toggle_enabled, checked=lambda i: state["enabled"]),
+        pystray.MenuItem(lambda i: "啟用（Ctrl+Shift+'）", toggle_enabled, checked=lambda i: state["enabled"]),
         pystray.MenuItem("Enter 自動偵測亂碼", toggle_auto, checked=lambda i: state["auto_enter"]),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("開啟 log", open_log),
