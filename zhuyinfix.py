@@ -610,7 +610,30 @@ def run_daemon(lex):
         pass
 
 
+def _setup_logging():
+    """pythonw 沒有 stdout/stderr；把輸出和所有未捕捉例外寫到 zhuyinfix.log，方便查為何閃退。"""
+    import traceback
+    log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "zhuyinfix.log")
+    try:
+        if os.path.exists(log_path) and os.path.getsize(log_path) > 1_000_000:
+            os.remove(log_path)
+    except OSError:
+        pass
+    if sys.stdout is None or sys.stderr is None:
+        f = open(log_path, "a", encoding="utf-8", buffering=1)
+        sys.stdout = sys.stderr = f
+    print(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} 啟動 pid={os.getpid()} ===", flush=True)
+
+    def hook(exc_type, exc, tb):
+        print(f"[{time.strftime('%H:%M:%S')}] 未捕捉例外:", flush=True)
+        traceback.print_exception(exc_type, exc, tb, file=sys.stderr)
+        sys.stderr.flush()
+    sys.excepthook = hook
+    threading.excepthook = lambda a: hook(a.exc_type, a.exc_value, a.exc_traceback)
+
+
 def main():
+    _setup_logging()
     ap = argparse.ArgumentParser()
     ap.add_argument("--text", help="直接轉換這段文字後結束")
     args = ap.parse_args()
@@ -625,7 +648,14 @@ def main():
             if sy:
                 print(f"  {ch} {sy}: {' '.join(lex.homophones(sy, 10))}")
         return
-    run_daemon(lex)
+    try:
+        run_daemon(lex)
+    except BaseException:
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        raise
+    finally:
+        print(f"=== {time.strftime('%H:%M:%S')} 結束 ===", flush=True)
 
 
 if __name__ == "__main__":
