@@ -570,6 +570,13 @@ def run_daemon(lex):
         print(f"  選字 [{idx}] -> {new_ch}: {new_text}", flush=True)
 
     # --- tk（主執行緒） ---
+    try:                                   # 150% 縮放下 UIA/滑鼠回實體像素，Tk 若不宣告 DPI 感知會用邏輯像素 → 小框位置歪掉
+        user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))   # PER_MONITOR_AWARE_V2
+    except Exception:
+        try:
+            user32.SetProcessDPIAware()
+        except Exception:
+            pass
     root = tk.Tk()
     root.withdraw()
 
