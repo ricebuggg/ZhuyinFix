@@ -315,6 +315,12 @@ def run_daemon(lex):
     def do_convert():
         state["hwnd"] = user32.GetForegroundWindow()
         try:
+            buf = ctypes.create_unicode_buffer(256)
+            user32.GetWindowTextW(state["hwnd"], buf, 256)
+            print(f"[{time.strftime('%H:%M:%S')}] 快捷鍵 視窗={buf.value!r}", flush=True)
+        except Exception as e:
+            print(f"[{time.strftime('%H:%M:%S')}] 快捷鍵 (取視窗名失敗 {e})", flush=True)
+        try:
             saved = pyperclip.paste()
         except Exception:
             saved = ""
@@ -378,7 +384,7 @@ def run_daemon(lex):
     BG, FG, DIM, HI, SEL, CUR = "#1f2937", "#f9fafb", "#9ca3af", "#374151", "#2563eb", "#4b5563"
     FONT = ("Microsoft JhengHei", 14, "bold")
     SMALL = ("Microsoft JhengHei", 11)
-    IDLE_MS = 20000
+    IDLE_MS = 8000
     PAGE = 9
     sel = {"active": False, "idx": 0, "cands": [], "page": 0, "cur": 0}
 
@@ -568,6 +574,9 @@ def run_daemon(lex):
                     w = state["popup"]
                     if w is not None:
                         w.enter_select()
+                elif msg[0] == "close":
+                    if not sel["active"]:
+                        close_popup(back=True)
                 elif msg[0] == "advance":
                     w = state["popup"]
                     if w is not None and sel["active"]:
@@ -584,8 +593,17 @@ def run_daemon(lex):
           0x0D: "Return", 0x1B: "Escape", 0x21: "Prior", 0x22: "Next", 0x09: "Tab"}
     VK.update({0x30 + d: str(d) for d in range(10)})
 
+    MODS = {0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x5B, 0x5C}
+
     def key_filter(msg, data):
-        """選字模式中攔截導航/數字鍵，不讓它們進到目前的 App（輸入法的做法）。"""
+        """選字模式中攔截導航/數字鍵，不讓它們進到目前的 App（輸入法的做法）。
+        非選字模式：使用者繼續打字/按 Enter 就把小框收掉（不攔鍵）。"""
+        if state["popup"] is not None and not sel["active"]:
+            if msg in (0x100, 0x104) and data.vkCode not in MODS:
+                ctrl_shift = (user32.GetAsyncKeyState(0x11) & 0x8000) and (user32.GetAsyncKeyState(0x10) & 0x8000)
+                if not (data.vkCode == 0x5A and ctrl_shift):   # Ctrl+Shift+Z 留給選字
+                    jobs.put(("close",))
+            return True
         if not sel["active"] or sel.get("busy"):
             return True
         name = VK.get(data.vkCode)
