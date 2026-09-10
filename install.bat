@@ -24,5 +24,5 @@ if exist "%LNK%" (echo       已加入啟動資料夾) else (echo       捷徑�
 echo [3/3] 立即啟動...
 call ZhuyinFix.bat
 echo.
-echo 完成。在任何視窗打亂碼後按 Ctrl+Shift+Z 試試（第一次啟動要幾秒下載套件）。
+echo 完成。在任何視窗打亂碼後按 Ctrl+Q 試試（第一次啟動要幾秒下載套件）。
 pause
