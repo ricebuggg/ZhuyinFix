@@ -691,7 +691,7 @@ def run_daemon(lex):
             else:
                 y += 6
             sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
-            x, y = max(0, min(x, sw - 320)), max(0, min(y, sh - 160))
+            x, y = max(0, min(x, sw - round(320 * SCALE))), max(0, min(y, sh - round(160 * SCALE)))
             win.geometry(f"+{x}+{y}")
         win.update_idletasks()
         try:
@@ -744,7 +744,7 @@ def run_daemon(lex):
             for n, c in enumerate(cs[base:base + PAGE]):
                 bg = SEL if n == sel["cur"] else BG
                 l = tk.Label(cand, text=f"{n + 1}  {c}", fg=FG, bg=bg, font=SMALL,
-                             padx=8, pady=1, anchor="w", width=8, cursor="hand2")
+                             padx=round(8 * SCALE), pady=round(1 * SCALE), anchor="w", width=8, cursor="hand2")
                 l.pack(anchor="w")
                 l.bind("<Button-1>", lambda e, n=n: pick(n))
             if pages > 1:
