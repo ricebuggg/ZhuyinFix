@@ -594,8 +594,34 @@ def run_daemon(lex):
     class _POINT(ctypes.Structure):
         _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
 
+    try:
+        import uiautomation as _uia          # Electron/Chromium 不設 Win32 caret，改走 UI Automation
+    except Exception:
+        _uia = None
+
+    def _uia_caret():
+        """UIA TextPattern：選取範圍(collapsed=插入點)的矩形；contenteditable 常只給整個輸入框 → 退回框的左下角。"""
+        if _uia is None:
+            return None
+        c = _uia.GetFocusedControl()
+        if c is None:
+            return None
+        try:
+            tp = c.GetPattern(_uia.PatternId.TextPattern)
+            if tp:
+                for r in (tp.GetSelection() or []):
+                    for rc in (r.GetBoundingRectangles() or []):
+                        if rc.width() <= 40 and rc.height() <= 80:
+                            return rc.left, rc.bottom, "caret"
+        except Exception:
+            pass
+        rc = c.BoundingRectangle
+        if rc and 0 < rc.height() <= 300 and 0 < rc.width() < 3000:
+            return rc.left, rc.bottom, "box"
+        return None
+
     def caret_pos():
-        """文字插入點的螢幕座標（左下角）。拿不到（多數 Electron/瀏覽器不回報）就退回滑鼠位置。"""
+        """回傳 (x, y, 來源)。來源 caret=插入點左下 / box=輸入框左下 / mouse=滑鼠。"""
         try:
             hwnd = state["hwnd"] or user32.GetForegroundWindow()
             tid = user32.GetWindowThreadProcessId(hwnd, None)
@@ -604,10 +630,19 @@ def run_daemon(lex):
                     and (gti.rcCaret.right > gti.rcCaret.left or gti.rcCaret.bottom > gti.rcCaret.top):
                 pt = _POINT(gti.rcCaret.left, gti.rcCaret.bottom)
                 user32.ClientToScreen(gti.hwndCaret, ctypes.byref(pt))
-                return pt.x, pt.y - 20      # 呼叫端會 +20；讓小框貼在插入點正下方
+                return pt.x, pt.y, "caret"
         except Exception:
             pass
-        return root.winfo_pointerxy()
+        try:
+            t0 = time.time()
+            r = _uia_caret()
+            if r:
+                print(f"[popup] uia {r[2]} {time.time()-t0:.2f}s", flush=True)
+                return r
+        except Exception as e:
+            print("[popup] uia failed:", e, flush=True)
+        x, y = root.winfo_pointerxy()
+        return x, y, "mouse"
 
     def close_popup(back=True):
         w = state["popup"]
@@ -635,8 +670,14 @@ def run_daemon(lex):
         win.overrideredirect(True)
         win.attributes("-topmost", True)
         win.configure(bg=BG)
-        x, y = caret_pos()
-        win.geometry(f"+{x + 16}+{y + 20}")
+        x, y, src = caret_pos()
+        if src == "mouse":
+            x, y = x + 16, y + 20
+        else:
+            y += 6
+        sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+        x, y = max(0, min(x, sw - 320)), max(0, min(y, sh - 160))
+        win.geometry(f"+{x}+{y}")
         win.update_idletasks()
         try:
             hwnd = user32.GetAncestor(win.winfo_id(), 2)  # GA_ROOT
