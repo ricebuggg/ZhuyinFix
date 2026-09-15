@@ -3,3 +3,6 @@ __pycache__/
 learned.csv
 zhuyinfix.log
 lexicon.cache.pkl
+docs/posts.md
+docs/demo.mp4
+settings.json

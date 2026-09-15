@@ -4,7 +4,7 @@
   ji394t au04       -> 我愛吃麵
 
 用法
-  python zhuyinfix.py                 常駐（系統匣有圖示），Ctrl+Shift+' 觸發
+  python zhuyinfix.py                 常駐（系統匣有圖示），Ctrl+Shift+' 觸發（托盤選單可自訂）
   python zhuyinfix.py --text "su3cl3" 命令列測試，不常駐
 
 觸發後流程
@@ -29,6 +29,7 @@
 """
 import argparse
 import csv
+import json
 import pickle
 import re
 import math
@@ -45,11 +46,61 @@ LEARN_BOOST = 500000.0    # 同一組音節第二次選同一結果 -> 置頂（
 LEARN_FIRST = 20000.0     # 第一次選 -> 明顯加分但不置頂，避免一次誤選就壓死常用詞
 CTX_BONUS = 1.5           # 候選詞含有同一行前文已出現的字 -> log 機率加分
 CACHE = os.path.join(BASE, "lexicon.cache.pkl")
-HOTKEY = "Ctrl+Shift+'"          # 顯示用
 POPUP_POS = "center"             # 小框位置：center=螢幕正中 / caret=跟著插入點（抓不到退回滑鼠）
-HOTKEY_VK = 0xDE                 # VK_OEM_7 = ' 鍵；配 Ctrl+Shift。改鍵改這兩行
+SETTINGS = os.path.join(BASE, "settings.json")
+HK = {"vk": 0xDE, "ctrl": True, "shift": True, "alt": False}   # 預設 Ctrl+Shift+'（0xDE=VK_OEM_7）；托盤「設定快捷鍵」可改，存 settings.json
 MAX_PHRASE = 6           # 詞庫最長詞（音節數）
 POPUP_MS = 3000
+
+
+def load_settings():
+    try:
+        with open(SETTINGS, encoding="utf-8") as f:
+            hk = json.load(f).get("hotkey", {})
+        if isinstance(hk.get("vk"), int) and (hk.get("ctrl") or hk.get("alt")):
+            HK.update(vk=hk["vk"], ctrl=bool(hk.get("ctrl")), shift=bool(hk.get("shift")), alt=bool(hk.get("alt")))
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
+def save_settings():
+    try:
+        with open(SETTINGS, "w", encoding="utf-8") as f:
+            json.dump({"hotkey": HK}, f, ensure_ascii=False, indent=2)
+    except OSError as e:
+        print("[settings] 存檔失敗:", e, flush=True)
+
+
+_VK_NAMES = {0x20: "Space", 0x0D: "Enter", 0x09: "Tab", 0x08: "Backspace", 0x2E: "Delete", 0x2D: "Insert",
+             0x24: "Home", 0x23: "End", 0x21: "PgUp", 0x22: "PgDn", 0x25: "←", 0x26: "↑", 0x27: "→", 0x28: "↓",
+             0xBA: ";", 0xBB: "=", 0xBC: ",", 0xBD: "-", 0xBE: ".", 0xBF: "/", 0xC0: "`",
+             0xDB: "[", 0xDC: "\\", 0xDD: "]", 0xDE: "'"}
+
+
+def vk_name(vk):
+    if vk in _VK_NAMES:
+        return _VK_NAMES[vk]
+    if 0x30 <= vk <= 0x39 or 0x41 <= vk <= 0x5A:
+        return chr(vk)
+    if 0x60 <= vk <= 0x69:
+        return f"Num{vk - 0x60}"
+    if 0x70 <= vk <= 0x87:
+        return f"F{vk - 0x6F}"
+    try:
+        import ctypes
+        sc = ctypes.windll.user32.MapVirtualKeyW(vk, 0)
+        buf = ctypes.create_unicode_buffer(64)
+        if sc and ctypes.windll.user32.GetKeyNameTextW(sc << 16, buf, 64):
+            return buf.value
+    except Exception:
+        pass
+    return f"VK{vk:02X}"
+
+
+def hk_name():
+    mods = [m for m, on in (("Ctrl", HK["ctrl"]), ("Alt", HK["alt"]), ("Shift", HK["shift"])) if on]
+    return "+".join(mods + [vk_name(HK["vk"])])
+
 
 # ------------------------------------------------------------ 鍵盤對照（大千/標準注音）
 KEYMAP = {
@@ -716,8 +767,8 @@ def run_daemon(lex):
         row.pack(anchor="w", padx=PADX - 2, pady=(0, PADY // 2))
         cand = tk.Frame(win, bg=BG)
         cand.pack(anchor="w", padx=PADX - 2, pady=(0, PADY // 2))
-        hint = tk.Label(win, text=("已自動轉換 · Enter 送出 · Esc 復原 · Ctrl+Shift+' 選字" if auto
-                                   else "再按 Ctrl+Shift+' 進入選字 · Esc 復原"), fg=DIM, bg=BG,
+        hint = tk.Label(win, text=(f"已自動轉換 · Enter 送出 · Esc 復原 · {hk_name()} 選字" if auto
+                                   else f"再按 {hk_name()} 進入選字 · Esc 復原"), fg=DIM, bg=BG,
                         font=TINY)
         hint.pack(anchor="w", padx=PADX, pady=(0, PADY))
         labels = []
@@ -856,11 +907,74 @@ def run_daemon(lex):
         win.on_key = on_key
         win.advance = advance
 
+    capture = {"on": False}                     # True = 托盤「設定快捷鍵」中，hook 抓下一個按鍵組合
+    hkwin = {"win": None, "msg": None, "timer": None}
+
+    def close_hk_dialog():
+        capture["on"] = False
+        w, hkwin["win"], hkwin["msg"] = hkwin["win"], None, None
+        if hkwin["timer"]:
+            try:
+                root.after_cancel(hkwin["timer"])
+            except Exception:
+                pass
+            hkwin["timer"] = None
+        if w is not None:
+            try:
+                w.destroy()
+            except Exception:
+                pass
+
+    def open_hk_dialog():
+        close_hk_dialog()
+        win = tk.Toplevel(root)
+        hkwin["win"] = win
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+        win.configure(bg=BG)
+        win.withdraw()
+        tk.Label(win, text="設定快捷鍵", fg=FG, bg=BG, font=FONT).pack(anchor="w", padx=PADX, pady=(PADY, 0))
+        msg = tk.Label(win, text=f"目前：{hk_name()}\n請直接按下新的組合（需含 Ctrl 或 Alt）",
+                       fg=DIM, bg=BG, font=SMALL, justify="left")
+        msg.pack(anchor="w", padx=PADX, pady=(PADY // 2, 0))
+        tk.Label(win, text="Esc 取消 · 設定存在 settings.json", fg=DIM, bg=BG, font=TINY).pack(
+            anchor="w", padx=PADX, pady=(0, PADY))
+        hkwin["msg"] = msg
+        win.update_idletasks()
+        w, h = win.winfo_reqwidth(), win.winfo_reqheight()
+        win.geometry(f"+{(root.winfo_screenwidth() - w) // 2}+{(root.winfo_screenheight() - h) // 2}")
+        win.deiconify()
+        capture["on"] = True
+
+    def apply_hotkey(vk, ctrl, shift, alt):
+        HK.update(vk=vk, ctrl=ctrl, shift=shift, alt=alt)
+        hk_state["down"] = False
+        save_settings()
+        print(f"[{time.strftime('%H:%M:%S')}] 快捷鍵已改為 {hk_name()}", flush=True)
+        capture["on"] = False
+        if hkwin["msg"] is not None:
+            hkwin["msg"].config(text=f"已設定：{hk_name()}", fg=FG)
+        hkwin["timer"] = root.after(1200, close_hk_dialog)
+        try:
+            if tray is not None:
+                tray.update_menu()
+        except Exception as e:
+            print("[tray] update_menu:", e, flush=True)
+
     def poll():
         try:
             while True:
                 msg = jobs.get_nowait()
-                if msg[0] == "show":
+                if msg[0] == "sethk":
+                    open_hk_dialog()
+                elif msg[0] == "hk_set":
+                    apply_hotkey(*msg[1:])
+                elif msg[0] == "hk_reject":
+                    if hkwin["msg"] is not None:
+                        hkwin["msg"].config(text="需含 Ctrl 或 Alt，請再按一次\n（Esc 取消）")
+                elif msg[0] == "hk_cancel":
+                    close_hk_dialog()
+                elif msg[0] == "show":
                     show_popup(*msg[1:])
                 elif msg[0] == "select":
                     w = state["popup"]
@@ -934,7 +1048,22 @@ def run_daemon(lex):
         down = msg in (0x100, 0x104)
         ctrl = user32.GetAsyncKeyState(0x11) & 0x8000
         shift = user32.GetAsyncKeyState(0x10) & 0x8000
-        is_hk = data.vkCode == HOTKEY_VK and ctrl and shift
+        alt = user32.GetAsyncKeyState(0x12) & 0x8000
+        if capture["on"]:
+            # 設定快捷鍵中：吞掉所有非修飾鍵，第一個按下的組合就是新快捷鍵；Esc 取消
+            if data.vkCode in MODS:
+                return True
+            if down:
+                if data.vkCode == 0x1B:
+                    jobs.put(("hk_cancel",))
+                elif ctrl or alt:
+                    jobs.put(("hk_set", data.vkCode, bool(ctrl), bool(shift), bool(alt)))
+                else:
+                    jobs.put(("hk_reject",))
+            key_listener.suppress_event()
+            return
+        is_hk = (data.vkCode == HK["vk"] and bool(ctrl) == HK["ctrl"]
+                 and bool(shift) == HK["shift"] and bool(alt) == HK["alt"])
         if is_hk and state["enabled"]:
             # 快捷鍵自己在 hook 層處理並整個吞掉，App 完全看不到（pynput GlobalHotKeys 只聽不吞，
             # 而且 Shift+' 在 Windows 會被讀成 " 導致比對失敗）
@@ -944,7 +1073,7 @@ def run_daemon(lex):
             elif not down:
                 hk_state["down"] = False
             key_listener.suppress_event()
-        elif not down and data.vkCode == HOTKEY_VK:
+        elif not down and data.vkCode == HK["vk"]:
             hk_state["down"] = False
         if state["popup"] is None and not sel["active"]:
             if down and not ctrl:
@@ -985,11 +1114,13 @@ def run_daemon(lex):
         key_listener.suppress_event()
 
     hk_state = {"down": False}
+    load_settings()
+    tray = None
     key_listener = keyboard.Listener(win32_event_filter=key_filter)
     key_listener.daemon = True
     key_listener.start()
 
-    print(f"ZhuyinFix 常駐中，快捷鍵 {HOTKEY}（Ctrl+C 結束）", flush=True)
+    print(f"ZhuyinFix 常駐中，快捷鍵 {hk_name()}（Ctrl+C 結束）", flush=True)
     tray = start_tray(root, state, jobs)
     root.after(100, poll)
     try:
@@ -1052,8 +1183,9 @@ def start_tray(root, state, jobs):
         jobs.put(("quit",))                # tk 不是 thread-safe，交給主執行緒 destroy
 
     menu = pystray.Menu(
-        pystray.MenuItem(lambda i: "啟用（Ctrl+Shift+'）", toggle_enabled, checked=lambda i: state["enabled"]),
+        pystray.MenuItem(lambda i: f"啟用（{hk_name()}）", toggle_enabled, checked=lambda i: state["enabled"]),
         pystray.MenuItem("Enter 自動偵測亂碼", toggle_auto, checked=lambda i: state["auto_enter"]),
+        pystray.MenuItem("設定快捷鍵…", lambda icon, item: jobs.put(("sethk",))),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("開啟 log", open_log),
         pystray.MenuItem("開啟資料夾（改 user_phrases / learned）", open_dir),
