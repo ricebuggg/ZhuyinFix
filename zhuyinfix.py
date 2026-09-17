@@ -423,6 +423,16 @@ def run_daemon(lex):
 
     user32 = ctypes.windll.user32
     k32 = ctypes.windll.kernel32
+    # 單一實例：兩份同時掛鍵盤 hook 會觸發兩次。托盤「重新啟動」是先關舊的再開新的，等最多 3 秒
+    k32.CreateMutexW.restype = ctypes.c_void_p
+    for _ in range(6):
+        k32.CreateMutexW(None, True, "Local\\ZhuyinFix.single")
+        if k32.GetLastError() != 183:            # ERROR_ALREADY_EXISTS
+            break
+        time.sleep(0.5)
+    else:
+        print("ZhuyinFix 已經在執行，這份直接結束", flush=True)
+        return
     for fn, res in ((user32.GetClipboardData, ctypes.c_void_p), (k32.GlobalLock, ctypes.c_void_p),
                     (k32.GlobalAlloc, ctypes.c_void_p), (user32.SetClipboardData, ctypes.c_void_p)):
         fn.restype = res
